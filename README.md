@@ -2,6 +2,8 @@
 
 NYT pips puzzle solver in Rust. Loads a JSON description of rule regions and a multiset of dominoes, then performs a backtracking search with forward checking, outputting an ASCII board.
 
+This project is just meant as a way for me to learn rust. Don't put too much trust in the code.
+
 ## Puzzle Concept
 Each coordinate cell must be covered by exactly one half of a domino. A domino contributes its two pip values to the two cells it spans. Regions (arbitrary sets of coordinates) have textual rules restricting the pip values:
 
