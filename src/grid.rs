@@ -76,6 +76,7 @@ pub struct GameGrid {
     parsed_rules: Vec<Rule>,                   // parallel to entries
     coord_regions: HashMap<Coord, Vec<usize>>, // coord -> indices of entries
     domino_inventory: Vec<Domino>,             // remaining dominoes
+    domino_ids: HashMap<Coord, usize>, // new: track which domino each coord belongs to
 }
 
 impl GameGrid {
@@ -106,6 +107,7 @@ impl GameGrid {
             parsed_rules,
             coord_regions,
             domino_inventory: parsed.dominoes,
+            domino_ids: HashMap::new(),
         }
     }
 
@@ -268,32 +270,89 @@ impl GameGrid {
                 continue;
             } // sentinel used when consumed
             for &partner in &partner_candidates {
-                // Build orientations vector to avoid borrowing temporary slice
-                let orientations: &[(u8, u8)] = if domino.0 == domino.1 {
-                    &[(domino.0, domino.1)]
-                } else {
-                    &[(domino.0, domino.1), (domino.1, domino.0)]
-                };
-                for &(a_val, b_val) in orientations {
-                    // Assign
+                let orientations: &[(u8,u8)] = if domino.0 == domino.1 { &[(domino.0, domino.1)] } else { &[(domino.0, domino.1), (domino.1, domino.0)] };
+                for &(a_val,b_val) in orientations {
                     self.occupied.insert(next_coord, a_val);
                     self.occupied.insert(partner, b_val);
+                    self.domino_ids.insert(next_coord, i);
+                    self.domino_ids.insert(partner, i);
                     if self.affected_regions_feasible(&[next_coord, partner]) {
-                        // mark domino used
-                        let saved = domino;
-                        self.domino_inventory[i] = (255, 255);
-                        if self.backtrack() {
-                            return true;
-                        }
-                        // restore domino
+                        let saved = domino; self.domino_inventory[i] = (255,255);
+                        if self.backtrack() { return true; }
                         self.domino_inventory[i] = saved;
                     }
-                    // undo assignment
                     self.occupied.remove(&next_coord);
                     self.occupied.remove(&partner);
+                    self.domino_ids.remove(&next_coord);
+                    self.domino_ids.remove(&partner);
                 }
             }
         }
         false
     }
+
+    /// Render the current grid as ASCII with origin at bottom-left (y increases upward).
+    /// Each occupied cell shows its pip value; undefined coordinates are blank.
+    pub fn ascii_board_bottom_origin(&self) -> String {
+        if self.rule_index.is_empty() { return String::new(); }
+        let mut min_x = u32::MAX; let mut min_y = u32::MAX; let mut max_x = 0u32; let mut max_y = 0u32;
+        for &(x,y) in self.rule_index.keys() { min_x = min_x.min(x); min_y = min_y.min(y); max_x = max_x.max(x); max_y = max_y.max(y); }
+        use std::fmt::Write;
+        let mut out = String::new();
+        for y in (min_y..=max_y).rev() { // top to bottom so origin visually bottom-left
+            for x in min_x..=max_x {
+                let c = (x,y);
+                if self.rule_index.contains_key(&c) {
+                    if let Some(v) = self.occupied.get(&c) { write!(out, "{v} ").ok(); } else { out.push_str(". "); }
+                } else {
+                    out.push_str("  ");
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    pub fn ascii_board_colored_pairs(&self, color: bool) -> String {
+        if self.rule_index.is_empty() { return String::new(); }
+        if !color { return self.ascii_board_bottom_origin(); }
+        let mut min_x = u32::MAX; let mut min_y = u32::MAX; let mut max_x = 0u32; let mut max_y = 0u32;
+        for &(x,y) in self.rule_index.keys() { min_x = min_x.min(x); min_y = min_y.min(y); max_x = max_x.max(x); max_y = max_y.max(y); }
+        use std::fmt::Write; let mut out = String::new();
+        for y in (min_y..=max_y).rev() {
+            for x in min_x..=max_x {
+                let c=(x,y);
+                if self.rule_index.contains_key(&c) {
+                    if let Some(&v)=self.occupied.get(&c) {
+                        let id = self.domino_ids.get(&c).copied();
+                        if let Some(idx) = id { let (start,end)=color_for_domino(idx); write!(out, "{start}{v}{end} ").ok(); } else { write!(out, "{v} ").ok(); }
+                    } else { out.push_str(". "); }
+                } else { out.push_str("  "); }
+            }
+            out.push('\n');
+        }
+        out
+    }
+    /// New default ascii_board name referencing colored pairs output
+    pub fn ascii_board(&self, color: bool) -> String { self.ascii_board_colored_pairs(color) }
+}
+
+fn color_for_domino(idx: usize) -> (&'static str, &'static str) {
+    const RESET: &str = "\x1b[0m";
+    // Foreground (text) colors, bold for visibility. Cycles if more dominoes than colors.
+    const PAL: [&str; 12] = [
+        "\x1b[1;38;5;196m", // red
+        "\x1b[1;38;5;202m", // orange
+        "\x1b[1;38;5;226m", // yellow
+        "\x1b[1;38;5;46m",  // green
+        "\x1b[1;38;5;51m",  // cyan
+        "\x1b[1;38;5;27m",  // blue
+        "\x1b[1;38;5;129m", // purple
+        "\x1b[1;38;5;201m", // pink
+        "\x1b[1;38;5;208m", // dark orange
+        "\x1b[1;38;5;118m", // light green
+        "\x1b[1;38;5;99m",  // violet
+        "\x1b[1;38;5;244m", // grey
+    ];
+    (PAL[idx % PAL.len()], RESET)
 }
