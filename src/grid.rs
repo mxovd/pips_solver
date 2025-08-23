@@ -356,3 +356,131 @@ fn color_for_domino(idx: usize) -> (&'static str, &'static str) {
     ];
     (PAL[idx % PAL.len()], RESET)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_parse_basic() {
+        assert!(matches!(Rule::parse("="), Rule::Equal));
+        assert!(matches!(Rule::parse("x"), Rule::Any));
+        assert!(matches!(Rule::parse(">3"), Rule::GreaterThan(3)));
+        assert!(matches!(Rule::parse("<7"), Rule::LessThan(7)));
+        assert!(matches!(Rule::parse("10"), Rule::Sum(10)));
+    }
+
+    #[test]
+    fn rule_parse_unknown() {
+        assert!(matches!(Rule::parse("??"), Rule::Unknown));
+    }
+
+    #[test]
+    fn solve_trivial_two_cells() {
+        // Two adjacent cells with a single domino (2,5) and no constraints other than presence.
+        let parsed = GridFile {
+            grid: vec![GridEntry { rule: "x".to_string(), coords: vec![(0,0),(1,0)] }],
+            dominoes: vec![(2,5)],
+        };
+        let mut g = GameGrid::from_parsed(parsed);
+        let sol = g.solve().expect("should solve");
+        assert_eq!(sol.len(), 2);
+        let vals: Vec<u8> = sol.values().copied().collect();
+        assert!(vals.contains(&2) && vals.contains(&5));
+        // Color flag off should yield no ANSI escapes
+        let plain = g.ascii_board(false);
+        assert!(!plain.contains("\x1b["));
+    }
+
+    #[test]
+    fn ascii_color_flag_changes_output() {
+        let parsed = GridFile {
+            grid: vec![GridEntry { rule: "x".into(), coords: vec![(0,0),(1,0)] }],
+            dominoes: vec![(1,1)],
+        };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.solve().unwrap();
+        let colored = g.ascii_board(true);
+        let plain = g.ascii_board(false);
+        assert!(colored.contains("\x1b["));
+        assert!(!plain.contains("\x1b["));
+    }
+
+    #[test]
+    fn ascii_empty_grid() {
+        let parsed = GridFile { grid: vec![], dominoes: vec![] };
+        let g = GameGrid::from_parsed(parsed);
+        assert_eq!(g.ascii_board(false), "");
+        assert_eq!(g.ascii_board(true), "");
+    }
+
+    #[test]
+    fn unsolvable_two_cells_equal_rule() {
+        // Rule requires equality but only domino (1,2) available.
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "=".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![(1,2)] };
+        let mut g = GameGrid::from_parsed(parsed);
+        assert!(g.solve().is_none());
+    }
+
+    // Region state branch coverage tests
+    #[test]
+    fn region_equal_violated() {
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "=".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![(1,1)] };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.occupied.insert((0,0), 1);
+        g.occupied.insert((1,0), 2);
+        assert!(matches!(g.region_state(0), RegionState::Violated));
+    }
+
+    #[test]
+    fn region_sum_variants() {
+        // sum > target
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "3".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.occupied.insert((0,0),2); g.occupied.insert((1,0),2);
+        assert!(matches!(g.region_state(0), RegionState::Violated));
+        // max_possible < target
+        let parsed2 = GridFile { grid: vec![GridEntry{ rule: "8".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g2 = GameGrid::from_parsed(parsed2);
+        g2.occupied.insert((0,0),1); // one empty cell left => max_possible 7 <8
+        assert!(matches!(g2.region_state(0), RegionState::Violated));
+        // satisfied final
+        let parsed3 = GridFile { grid: vec![GridEntry{ rule: "5".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g3 = GameGrid::from_parsed(parsed3);
+        g3.occupied.insert((0,0),2); g3.occupied.insert((1,0),3);
+        assert!(matches!(g3.region_state(0), RegionState::Satisfied));
+    }
+
+    #[test]
+    fn region_greater_than_variants() {
+        // satisfied
+        let parsed = GridFile { grid: vec![GridEntry{ rule: ">3".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.occupied.insert((0,0),2); g.occupied.insert((1,0),2);
+        assert!(matches!(g.region_state(0), RegionState::Satisfied));
+        // boundary violated final (sum == k)
+        let parsed2 = GridFile { grid: vec![GridEntry{ rule: ">3".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g2 = GameGrid::from_parsed(parsed2);
+        g2.occupied.insert((0,0),1); g2.occupied.insert((1,0),2);
+        assert!(matches!(g2.region_state(0), RegionState::Violated));
+        // max_possible <= k early violation
+        let parsed3 = GridFile { grid: vec![GridEntry{ rule: ">8".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g3 = GameGrid::from_parsed(parsed3);
+        g3.occupied.insert((0,0),2); // max possible 8
+        assert!(matches!(g3.region_state(0), RegionState::Violated));
+    }
+
+    #[test]
+    fn region_less_than_variants() {
+        // satisfied final (sum < k)
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "<5".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.occupied.insert((0,0),2); g.occupied.insert((1,0),2);
+        assert!(matches!(g.region_state(0), RegionState::Satisfied));
+        // violated sum >= k
+        let parsed2 = GridFile { grid: vec![GridEntry{ rule: "<4".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g2 = GameGrid::from_parsed(parsed2);
+        g2.occupied.insert((0,0),2); g2.occupied.insert((1,0),2);
+        assert!(matches!(g2.region_state(0), RegionState::Violated));
+    }
+}
