@@ -15,6 +15,8 @@ Rule syntax:
 - `x`  : unconstrained region.
 - Unrecognized tokens are treated as unconstrained (reported internally as `Unknown`).
 
+**Coordinates are relative to the lower-left corner of the puzzle's bounding box, even counting cells that are not actually included of the puzzle grid. This ensures the printed solution correctly matches the puzzle's shape. The bottom left cell should be (1,1)**
+
 ## JSON Format
 ```json
 {
