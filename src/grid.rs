@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use serde::Deserialize;
@@ -7,14 +7,14 @@ pub type Coord = (u32, u32);
 pub type Domino = (u8, u8);
 
 /// Top-level JSON structure describing a puzzle: rule regions and the available domino set.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct GridFile {
     pub grid: Vec<GridEntry>,
     pub dominoes: Vec<Domino>,
 }
 
 /// One rule region with its textual rule and the list of coordinates it constrains.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct GridEntry {
     pub rule: String, // parsed later into Rule
     pub coords: Vec<Coord>,
@@ -82,6 +82,7 @@ pub struct GameGrid {
     coord_regions: HashMap<Coord, Vec<usize>>, // coord -> indices of entries
     domino_inventory: Vec<Domino>,             // remaining dominoes
     domino_ids: HashMap<Coord, usize>, // new: track which domino each coord belongs to
+    ordered_coords: Vec<Coord>, // deterministic ordering of coordinates
 }
 
 impl GameGrid {
@@ -97,14 +98,18 @@ impl GameGrid {
         let mut rule_index = HashMap::new();
         let mut parsed_rules = Vec::with_capacity(parsed.grid.len());
         let mut coord_regions: HashMap<Coord, Vec<usize>> = HashMap::new();
+    let mut coord_set: HashSet<Coord> = HashSet::new();
         for (i, entry) in parsed.grid.iter().enumerate() {
             let r = Rule::parse(&entry.rule);
             parsed_rules.push(r);
             for &c in &entry.coords {
                 rule_index.insert(c, entry.rule.clone());
                 coord_regions.entry(c).or_default().push(i);
+        coord_set.insert(c);
             }
         }
+    let mut ordered_coords: Vec<Coord> = coord_set.into_iter().collect();
+    ordered_coords.sort_unstable();
         GameGrid {
             entries: parsed.grid,
             rule_index,
@@ -113,6 +118,7 @@ impl GameGrid {
             coord_regions,
             domino_inventory: parsed.dominoes,
             domino_ids: HashMap::new(),
+        ordered_coords,
         }
     }
 
@@ -271,16 +277,16 @@ impl GameGrid {
                 .all(|(i, _)| matches!(self.region_state(i), RegionState::Satisfied));
         }
         // Choose an empty coordinate (simple heuristic: first)
-        let next_coord = self
-            .rule_index
-            .keys()
-            .find(|c| !self.occupied.contains_key(*c))
-            .copied()
+        let next_coord = *self
+            .ordered_coords
+            .iter()
+            .find(|c| !self.occupied.contains_key(c))
             .unwrap();
         // Try to pair with an adjacent empty coord
-        let partner_candidates: Vec<Coord> = Self::neighbors(next_coord)
+        let mut partner_candidates: Vec<Coord> = Self::neighbors(next_coord)
             .filter(|c| self.rule_index.contains_key(c) && !self.occupied.contains_key(c))
             .collect();
+        partner_candidates.sort_unstable(); // deterministic partner order
         if partner_candidates.is_empty() {
             return false;
         }
@@ -505,6 +511,20 @@ mod tests {
         let a = sol.get(&(0,0)).unwrap();
         let b = sol.get(&(1,0)).unwrap();
         assert_ne!(a,b);
+    }
+
+    #[test]
+    fn deterministic_solve() {
+        // A slightly larger grid to exercise ordering.
+        let parsed = GridFile { grid: vec![
+            GridEntry{ rule: "x".into(), coords: vec![(0,0),(1,0)] },
+            GridEntry{ rule: "!=".into(), coords: vec![(0,1),(1,1)] },
+        ], dominoes: vec![(1,2),(2,2)] };
+        let mut g1 = GameGrid::from_parsed(parsed.clone());
+        let mut g2 = GameGrid::from_parsed(parsed);
+        let s1 = g1.solve().unwrap();
+        let s2 = g2.solve().unwrap();
+        assert_eq!(s1, s2, "solver should be deterministic");
     }
 
     #[test]
