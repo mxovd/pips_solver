@@ -99,3 +99,11 @@ fn ansi_strip(s: &str) -> String {
 }
 
 fn normalize_ws(s: &str) -> String { s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n") }
+
+#[test]
+fn run_not_equal_grid_solves() {
+    let (out, err, code) = cargo_run(&fixture("not_equal_grid.json"), &[]);
+    assert_eq!(code, 0, "stderr: {err}");
+    // Should contain two numbers that differ (1 and 2 in some order)
+    assert!(out.contains('1') && out.contains('2'));
+}

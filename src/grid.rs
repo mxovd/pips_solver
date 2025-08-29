@@ -25,6 +25,8 @@ pub struct GridEntry {
 pub enum Rule {
     /// All pips in the region must be identical.
     Equal,
+    /// Not all pips in the region may be identical (i.e. at least one difference). Token: "!=".
+    NotEqual,
     /// Sum of all pips equals the target value.
     Sum(u32),
     /// Sum of all pips strictly greater than value.
@@ -42,6 +44,9 @@ impl Rule {
     fn parse(s: &str) -> Self {
         if s == "=" {
             return Rule::Equal;
+        }
+        if s == "!=" {
+            return Rule::NotEqual;
         }
         if s == "x" {
             return Rule::Any;
@@ -159,6 +164,22 @@ impl GameGrid {
                     RegionState::Violated
                 } else if empty == 0 {
                     RegionState::Satisfied
+                } else {
+                    RegionState::Incomplete
+                }
+            }
+            Rule::NotEqual => {
+                // If fewer than 2 filled, cannot decide yet unless region is completed with size 1 (unsatisfiable design).
+                if entry.coords.len() <= 1 {
+                    // Degenerate: a NotEqual single-cell region can never be satisfied once filled.
+                    return if empty == 0 { RegionState::Violated } else { RegionState::Incomplete };
+                }
+                if values.len() >= 2 && values.iter().any(|&v| v != values[0]) {
+                    // Already have a difference; rule permanently satisfied regardless of remaining empties.
+                    if empty == 0 { RegionState::Satisfied } else { RegionState::Satisfied }
+                } else if empty == 0 {
+                    // All filled and all equal -> violation.
+                    RegionState::Violated
                 } else {
                     RegionState::Incomplete
                 }
@@ -364,6 +385,7 @@ mod tests {
     #[test]
     fn rule_parse_basic() {
         assert!(matches!(Rule::parse("="), Rule::Equal));
+    assert!(matches!(Rule::parse("!="), Rule::NotEqual));
         assert!(matches!(Rule::parse("x"), Rule::Any));
         assert!(matches!(Rule::parse(">3"), Rule::GreaterThan(3)));
         assert!(matches!(Rule::parse("<7"), Rule::LessThan(7)));
@@ -449,6 +471,40 @@ mod tests {
         let mut g3 = GameGrid::from_parsed(parsed3);
         g3.occupied.insert((0,0),2); g3.occupied.insert((1,0),3);
         assert!(matches!(g3.region_state(0), RegionState::Satisfied));
+    }
+
+    #[test]
+    fn region_not_equal_variants() {
+        // Incomplete with only one value placed
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "!=".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g = GameGrid::from_parsed(parsed);
+        g.occupied.insert((0,0), 2);
+        assert!(matches!(g.region_state(0), RegionState::Incomplete));
+        // Satisfied when two different values present (even with empties left it stays satisfied)
+        let parsed2 = GridFile { grid: vec![GridEntry{ rule: "!=".into(), coords: vec![(0,0),(1,0),(2,0)] }], dominoes: vec![] };
+        let mut g2 = GameGrid::from_parsed(parsed2);
+        g2.occupied.insert((0,0), 3); g2.occupied.insert((1,0), 4);
+        assert!(matches!(g2.region_state(0), RegionState::Satisfied));
+        // Violated if fully filled and all equal
+        let parsed3 = GridFile { grid: vec![GridEntry{ rule: "!=".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![] };
+        let mut g3 = GameGrid::from_parsed(parsed3);
+        g3.occupied.insert((0,0),5); g3.occupied.insert((1,0),5);
+        assert!(matches!(g3.region_state(0), RegionState::Violated));
+        // Degenerate single-cell region: cannot satisfy once filled
+        let parsed4 = GridFile { grid: vec![GridEntry{ rule: "!=".into(), coords: vec![(0,0)] }], dominoes: vec![] };
+        let mut g4 = GameGrid::from_parsed(parsed4);
+        g4.occupied.insert((0,0),1);
+        assert!(matches!(g4.region_state(0), RegionState::Violated));
+    }
+
+    #[test]
+    fn solve_not_equal_example() {
+        let parsed = GridFile { grid: vec![GridEntry{ rule: "!=".into(), coords: vec![(0,0),(1,0)] }], dominoes: vec![(1,2)] };
+        let mut g = GameGrid::from_parsed(parsed);
+        let sol = g.solve().expect("should solve");
+        let a = sol.get(&(0,0)).unwrap();
+        let b = sol.get(&(1,0)).unwrap();
+        assert_ne!(a,b);
     }
 
     #[test]
